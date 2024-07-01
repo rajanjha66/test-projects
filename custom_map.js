@@ -1,92 +1,63 @@
-// custom_map_viz.js
-
-// Include Leaflet CSS and JS
-const leafletCss = document.createElement("link");
-leafletCss.rel = "stylesheet";
-leafletCss.href = "https://unpkg.com/leaflet@1.7.1/dist/leaflet.css";  // This is the link to Leaflet CSS
-document.head.appendChild(leafletCss);
-
-const leafletJs = document.createElement("script");
-leafletJs.src = "https://unpkg.com/leaflet@1.7.1/dist/leaflet.js";  // This is the link to Leaflet JavaScript
-document.head.appendChild(leafletJs);
-
 looker.plugins.visualizations.add({
-  id: "custom_map",
-  label: "Custom Map",
+  id: "heat-density-map",
+  label: "Heat Density Map",
   options: {
-    center_lat: {
-      type: "number",
-      label: "Center Latitude",
-      default: 0
+    color1: {
+      type: "string",
+      label: "Measure 1 Color",
+      display: "color",
+      default: "#ff0000"
     },
-    center_lng: {
-      type: "number",
-      label: "Center Longitude",
-      default: 0
-    },
-    zoom: {
-      type: "number",
-      label: "Zoom Level",
-      default: 2
+    color2: {
+      type: "string",
+      label: "Measure 2 Color",
+      display: "color",
+      default: "#0000ff"
     }
   },
   create: function(element, config) {
-    // Set up the initial state of the visualization
     element.innerHTML = `
       <style>
-        #map {
-          width: 100%;
-          height: 100%;
-        }
+        #map { height: 100%; }
       </style>
       <div id="map"></div>
     `;
 
-    this.map = L.map(element.querySelector("#map")).setView([config.center_lat, config.center_lng], config.zoom);
+    const leafletCss = document.createElement("link");
+    leafletCss.rel = "stylesheet";
+    leafletCss.href = "https://unpkg.com/leaflet@1.7.1/dist/leaflet.css";
+    document.head.appendChild(leafletCss);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(this.map);
+    const leafletScript = document.createElement("script");
+    leafletScript.src = "https://unpkg.com/leaflet@1.7.1/dist/leaflet.js";
+    leafletScript.onload = () => {
+      this.map = L.map(element.querySelector("#map")).setView([0, 0], 2);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19
+      }).addTo(this.map);
+
+      this.heatLayer1 = L.heatLayer([], { radius: 25, blur: 15, maxZoom: 17, gradient: { 0.4: config.color1 } });
+      this.heatLayer2 = L.heatLayer([], { radius: 25, blur: 15, maxZoom: 17, gradient: { 0.4: config.color2 } });
+
+      this.map.addLayer(this.heatLayer1);
+      this.map.addLayer(this.heatLayer2);
+    };
+    document.head.appendChild(leafletScript);
   },
-  update: function(data, element, config, queryResponse) {
-    // Clear any existing markers
-    this.map.eachLayer(function (layer) {
-      if (layer instanceof L.Marker) {
-        this.map.removeLayer(layer);
-      }
-    }.bind(this));
+  updateAsync: function(data, element, config, queryResponse, details, done) {
+    if (!this.map) return;
 
-    // Validate the data format
-    if (queryResponse.fields.dimensions.length < 2) {
-      this.addError({title: "Invalid Data", message: "Map requires at least two dimensions: latitude and longitude."});
-      return;
-    }
+    const locationField = queryResponse.fields.dimension_like[0].name;
+    const measure1 = queryResponse.fields.measure_like[0].name;
+    const measure2 = queryResponse.fields.measure_like[1].name;
 
-    // Extract the data for latitude and longitude
-    const latField = queryResponse.fields.dimensions.find(dim => dim.name.toLowerCase().includes("lat"));
-    const lngField = queryResponse.fields.dimensions.find(dim => dim.name.toLowerCase().includes("lng"));
+    const heatData1 = data.map(row => [row[locationField].value[0], row[locationField].value[1], row[measure1].value]);
+    const heatData2 = data.map(row => [row[locationField].value[0], row[locationField].value[1], row[measure2].value]);
 
-    if (!latField || !lngField) {
-      this.addError({title: "Invalid Data", message: "Data must contain latitude and longitude dimensions."});
-      return;
-    }
+    this.heatLayer1.setLatLngs(heatData1);
+    this.heatLayer2.setLatLngs(heatData2);
 
-    // Add markers for each data point
-    data.forEach(row => {
-      const lat = row[latField.name].value;
-      const lng = row[lngField.name].value;
-      const popupContent = queryResponse.fields.measures.map(measure => {
-        return `<strong>${measure.label_short}:</strong> ${row[measure.name].value}`;
-      }).join("<br>");
-
-      L.marker([lat, lng]).addTo(this.map)
-        .bindPopup(popupContent);
-    });
-
-    // Adjust map view to fit all markers
-    const bounds = data.map(row => [row[latField.name].value, row[lngField.name].value]);
-    if (bounds.length > 0) {
-      this.map.fitBounds(bounds);
-    }
+    done();
   }
 });
