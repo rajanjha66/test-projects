@@ -1,22 +1,12 @@
-// Define the visualization object
 looker.plugins.visualizations.add({
   id: "custom_map",
   label: "Custom Map with Multiple Measures",
   options: {
-    color_range: {
+    measure_colors: {
       type: "array",
-      label: "Color Range",
+      label: "Measure Colors",
+      display: "colors",
       default: ["#f00", "#0f0", "#00f"],
-    },
-    measure_one_color: {
-      type: "string",
-      label: "Measure One Color",
-      default: "#f00",
-    },
-    measure_two_color: {
-      type: "string",
-      label: "Measure Two Color",
-      default: "#0f0",
     },
   },
   create: function (element, config) {
@@ -35,6 +25,12 @@ looker.plugins.visualizations.add({
       style.appendChild(document.createTextNode(css));
     }
     document.head.appendChild(style);
+
+    // Initialize Leaflet.js map
+    this.map = L.map('map').setView([37.8, -96], 4);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(this.map);
   },
   update: function (data, element, config, queryResponse) {
     var mapElement = document.getElementById("map");
@@ -44,39 +40,41 @@ looker.plugins.visualizations.add({
       mapElement = document.getElementById("map");
     }
 
-    // Clear previous map if any
-    while (mapElement.firstChild) {
-      mapElement.removeChild(mapElement.firstChild);
+    // Clear previous layers
+    if (this.layerGroup) {
+      this.layerGroup.clearLayers();
+    } else {
+      this.layerGroup = L.layerGroup().addTo(this.map);
     }
 
     // Prepare map data
     var locations = data.map(function (row) {
       return {
         location: row[queryResponse.fields.dimension_like[0].name].value,
-        measure_one: row[queryResponse.fields.measure_like[0].name].value,
-        measure_two: row[queryResponse.fields.measure_like[1].name].value,
+        measures: queryResponse.fields.measure_like.map(measure => ({
+          name: measure.name,
+          value: row[measure.name].value,
+        })),
       };
     });
 
-    // Initialize the map (using Leaflet.js as an example)
-    var map = L.map(mapElement).setView([37.8, -96], 4);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(map);
-
     // Define color scales for measures
-    var measureOneColor = config.measure_one_color;
-    var measureTwoColor = config.measure_two_color;
+    var measureColors = config.measure_colors;
 
     locations.forEach(function (loc) {
+      var totalValue = loc.measures.reduce((sum, measure) => sum + measure.value, 0);
       var marker = L.circleMarker([loc.location.lat, loc.location.lng], {
-        color: measureOneColor,
-        fillColor: measureTwoColor,
+        color: measureColors[0],
+        fillColor: measureColors[1],
         fillOpacity: 0.5,
-        radius: Math.sqrt(loc.measure_one + loc.measure_two) * 2
-      }).addTo(map);
-      
-      marker.bindPopup("<b>Location:</b> " + loc.location.name + "<br><b>Measure One:</b> " + loc.measure_one + "<br><b>Measure Two:</b> " + loc.measure_two);
-    });
+        radius: Math.sqrt(totalValue) * 2
+      }).addTo(this.layerGroup);
+
+      var popupContent = `<b>Location:</b> ${loc.location}<br>`;
+      loc.measures.forEach((measure, index) => {
+        popupContent += `<b>Measure ${index + 1}:</b> ${measure.value}<br>`;
+      });
+      marker.bindPopup(popupContent);
+    }, this);
   }
 });
